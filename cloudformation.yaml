@@ -45,7 +45,7 @@ Resources:
             - EventBusRole
             - Arn
           Id: "OktaEventRuleid"
-        #Create AWS Lambd Role
+        #Create AWS Lambda Role
   TransformLambdaRole:
     Type: AWS::IAM::Role
     Properties:
