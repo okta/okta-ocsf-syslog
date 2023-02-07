@@ -1,37 +1,40 @@
 Parameters:
   StreamName:
     AllowedPattern: ^[0-9a-zA-Z]+([0-9a-zA-Z-]*[0-9a-zA-Z])*$
-    Default: LogsOkta
+    Default: OktaSecurityLakeDeliveryStream
     Type: String
   GlueDatabaseName:
     Type: String
-    Default: "okta_ocsf"
+    Default: "okta_ocsf_db"
     Description: "Name of the AWS Glue database for OCSF database"
   GlueTableName:
     Type: String
     MinLength: "4"
-    Default: "okta_ocsf"
+    Default: "okta_ocsf_tb"
     Description: "Name of the AWS Glue database for OCSF database"
   PartnerEventBus:
     Description: Name of Okta's PArtner Event bus
     Type: String
+  SecurityLakeS3:
+    Description: Name of the Security Lake S3 Bucket
+    Type: String
 
 Resources:
   # Create Event Rule
-  myeventrule:
+  OktaEventRule:
     Type: AWS::Events::Rule
     Properties:
       Description: Okta SysLog event
       EventBusName: !Ref PartnerEventBus
       EventPattern:
-         {
-            "detail": {
-              "displayMessage": [ {
-                "prefix": "Authentication of user"
-              }]
-            }
+        {
+          "detail": {
+            "displayMessage": [ {
+              "prefix": "Authentication of user"
+            }]
           }
-      Name: myeventrule
+        }
+      Name: OktaEventRule
       State: ENABLED
 
       Targets:
@@ -41,42 +44,42 @@ Resources:
           RoleArn: !GetAtt
             - EventBusRole
             - Arn
-          Id: "myeventruleid"
-        #Create AWS Lambd Role TODO: Role is wide open
-  Lambdarole:
-      Type: AWS::IAM::Role
-      Properties:
-        AssumeRolePolicyDocument:
-          Version: '2012-10-17'
-          Statement:
+          Id: "OktaEventRuleid"
+        #Create AWS Lambda Role
+  TransformLambdaRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
           - Effect: Allow
             Principal:
               Service:
-              - lambda.amazonaws.com
+                - lambda.amazonaws.com
             Action:
-            - sts:AssumeRole
-        Policies:
-          - PolicyName: lambda-cloudwatch
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
+              - sts:AssumeRole
+      Policies:
+        - PolicyName: lambda-cloudwatch
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
               - Effect: Allow
                 Action:
-                - logs:CreateLogGroup
-                - logs:CreateLogStream
-                - logs:PutLogEvents
+                  - logs:CreateLogGroup
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
                 Resource: !Sub arn:${AWS::Partition}:logs:*:*:*
-          - PolicyName: flow-logs-policy
-            PolicyDocument:
-              Version: "2012-10-17"
-              Statement:
+        - PolicyName: flow-logs-policy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
               - Effect: Allow
                 Action:
-                - '*'
+                  - '*'
                 Resource: '*'
   # CloudFormation creates a lambda function named <CloudFormationStackName-ResourceName-RandomChars>
-  # Example: CreateLambdaFunction-TestLambdaFunction-N7S3FMXJ8Z8R
-  TestLambdaFunction:
+  # Example: CreateLambdaFunction-TransformLambdaFunction-N7S3FMXJ8Z8R
+  TransformLambdaFunction:
     Type: AWS::Lambda::Function
     Properties:
       Description: aws:states:opt-in
@@ -465,7 +468,7 @@ Resources:
               # Return the JSON String
               return json_data
       Handler: index.lambda_handler
-      Role: !GetAtt Lambdarole.Arn
+      Role: !GetAtt TransformLambdaRole.Arn
       Runtime: python3.8
       Timeout: 120
       MemorySize: 128
@@ -480,11 +483,11 @@ Resources:
         Name: !Ref GlueDatabaseName
       CatalogId: !Ref AWS::AccountId
 
-  MyS3Bucket:
-    Type: AWS::S3::Bucket
-    Properties:
-      BucketName: !Sub 'access-logs-parquet-${AWS::Region}-${AWS::AccountId}'
-      AccessControl: Private
+  # MyS3Bucket:
+  #   Type: AWS::S3::Bucket
+  #   Properties:
+  #     BucketName: !Sub 'access-logs-parquet-${AWS::Region}-${AWS::AccountId}'
+  #     AccessControl: Private
 
   OCSFSchemaTable:
     Type: "AWS::Glue::Table"
@@ -578,7 +581,7 @@ Resources:
               "paths": "time,activity,activity_id,auth_protocol,auth_protocol_id,category_name,category_uid,class_name,class_uid,displayMessage,dst_endpoint,dst_user,enrichments,is_cleartext,logon_type,logon_type_id,profile,ref_time,session_uid,severity,severity_id,src_endpoint,user,status,status_code,status_detail,status_id,type_name,type_uid,metadata"
             }
             SerializationLibrary: "org.openx.data.jsonserde.JsonSerDe"
-          Location: !Sub "s3://${MyS3Bucket}"
+          Location: !Sub "s3://${SecurityLakeS3}"
 
         Name: !Ref GlueTableName
       DatabaseName: !Ref GlueDatabaseName
@@ -587,19 +590,20 @@ Resources:
   #Create AWS Firehose Artifact
   DeliveryStream:
     Type: AWS::KinesisFirehose::DeliveryStream
+    DependsOn: DateLakePermission
     Properties:
       DeliveryStreamName: !Ref StreamName
       DeliveryStreamType: DirectPut
       ExtendedS3DestinationConfiguration:
-        BucketARN: !Sub 'arn:aws:s3:::${MyS3Bucket}'
+        BucketARN: !Sub 'arn:aws:s3:::${SecurityLakeS3}'
         #Prefix: "!{partitionKeyFromLambda:source}/region=!{partitionKeyFromLambda:region}/AWS_account=!{partitionKeyFromLambda:AWS_account}/eventhour=!{partitionKeyFromLambda:eventhour}/"
         Prefix: !Join
           - ''
           - - !Select [3, !Split ["/", !Ref PartnerEventBus]]
-            - '/region=!{partitionKeyFromLambda:region}/AWS_account=!{partitionKeyFromLambda:AWS_account}/eventhour=!{partitionKeyFromLambda:eventhour}/'
+            - '/region=!{partitionKeyFromLambda:region}/accountId=!{partitionKeyFromLambda:AWS_account}/eventHour=!{partitionKeyFromLambda:eventhour}/'
         ErrorOutputPrefix: okta-ocsf-error
         BufferingHints:
-          IntervalInSeconds: 60
+          IntervalInSeconds: 300
           SizeInMBs: 66
         RoleARN: !GetAtt DeliveryRole.Arn
         DynamicPartitioningConfiguration:
@@ -624,7 +628,7 @@ Resources:
           Processors:
             - Parameters:
                 - ParameterName: LambdaArn
-                  ParameterValue: !GetAtt TestLambdaFunction.Arn
+                  ParameterValue: !GetAtt TransformLambdaFunction.Arn
               Type: Lambda
 
   DeliveryRole:
@@ -659,11 +663,11 @@ Resources:
                   - !Join
                     - ''
                     - - 'arn:aws:s3:::'
-                      - !Ref MyS3Bucket
+                      - !Ref SecurityLakeS3
                   - !Join
                     - ''
                     - - 'arn:aws:s3:::'
-                      - !Ref MyS3Bucket
+                      - !Ref SecurityLakeS3
                       - '/*'
               - Effect: Allow
                 Action:
@@ -708,7 +712,7 @@ Resources:
                       - ':'
                       - !Ref AWS::AccountId
                       - ':function:'
-                      - !Ref TestLambdaFunction
+                      - !Ref TransformLambdaFunction
               - Effect: Allow
                 Action:
                   - 'kms:GenerateDataKey'
@@ -778,6 +782,32 @@ Resources:
                   StringLike:
                     'kms:EncryptionContext:aws:s3:arn':
                       - 'arn:aws:kinesis:::%FIREHOSE_POLICY_TEMPLATE_PLACEHOLDER%/*'
+
+  DateLakePermission:
+    Type: AWS::LakeFormation::PrincipalPermissions
+    Properties:
+      Principal:
+        DataLakePrincipalIdentifier: !GetAtt DeliveryRole.Arn
+      Resource:
+        Table:
+          CatalogId: !Ref 'AWS::AccountId'
+          DatabaseName: !Ref OCSFOktaDatabase
+          Name: !Ref OCSFSchemaTable
+      Permissions:
+        - "SELECT"
+        - "INSERT"
+        - "DELETE"
+        - "ALTER"
+        - "DROP"
+        - "DESCRIBE"
+      PermissionsWithGrantOption:
+        - "SELECT"
+        - "INSERT"
+        - "DELETE"
+        - "ALTER"
+        - "DROP"
+        - "DESCRIBE"
+
   EventBusRole:
     Type: AWS::IAM::Role
     Properties:
@@ -809,15 +839,15 @@ Resources:
                       - ':deliverystream/'
                       - !Ref StreamName
 Outputs:
-   KinesisFirehose:
-     Description: Kinesis Firehose Name
-     Value: !Ref DeliveryStream
-   S3bucketname:
-     Value: !Ref MyS3Bucket
-     Description: Name of the bucket created
-   GlueDatabase:
-     Value: !Ref OCSFOktaDatabase
-     Description: AWS Glue Database
-   GlueTable:
-     Value: !Ref OCSFSchemaTable
-     Description: AWS Glue Table
+  KinesisFirehose:
+    Description: Kinesis Firehose Name
+    Value: !Ref DeliveryStream
+  S3bucketname:
+    Value: !Ref SecurityLakeS3
+    Description: Name of the bucket created
+  GlueDatabase:
+    Value: !Ref OCSFOktaDatabase
+    Description: AWS Glue Database
+  GlueTable:
+    Value: !Ref OCSFSchemaTable
+    Description: AWS Glue Table
