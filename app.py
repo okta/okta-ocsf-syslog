@@ -33,10 +33,10 @@ def lambda_handler(event, context):
 
         datetime1 = datetime.strptime(date_input, format)
         partitionKeys = {}
-        partitionKeys["source"] = 'OktaEventSource'
-        partitionKeys["region"] = context.invoked_function_arn.split(":")[3]
-        partitionKeys["AWS_account"] = context.invoked_function_arn.split(":")[4]
-        partitionKeys["eventhour"] = datetime1.strftime("%Y%m%d%H")
+        partitionKeys['source'] = 'OktaEventSource'
+        partitionKeys['region'] = context.invoked_function_arn.split(":")[3]
+        partitionKeys['AWS_account'] = context.invoked_function_arn.split(":")[4]
+        partitionKeys['eventhour'] = datetime1.strftime("%Y%m%d%H")
 
         # Reformats the output in a base64 encoded format.OCSF JSON Output will be used by Firehose datastream and AWS Glue Schema
         output_record = {
@@ -47,8 +47,7 @@ def lambda_handler(event, context):
             'metadata': {'partitionKeys': partitionKeys}
         }
         output.append(output_record)
-    print("JSON Output base64 Encoded format:")
-    print(output)
+    print(f"JSON Output base64 Encoded format: {output}")
     return {'records': output}
 
 
@@ -66,11 +65,11 @@ def get_activity_details(activity_info):
     """
     # Based on the OCSF schema definition, Successful Athentication is described as "unknown"
     # Activity Value will change based on a type of event you want to capture
-    activity = "Unknown"
+    activity = 'Unknown'
     # Use Activity ID associated with an activity
     activity_id = 0
     # Check if User Authentication is part of the activity Info
-    if "user.authentication" in activity_info:
+    if 'user.authentication' in activity_info:
         activity = 'Logon'
         activity_id = 1
     return activity, activity_id
@@ -88,12 +87,12 @@ def get_auth_protocol(auth_provider_detail):
     auth_protocol: Name of the activity
     auth_protocol: Identifier for the activity
     """
-    auth_protocol = "Unknown"
+    auth_protocol = 'Unknown'
     auth_protocol_id = 0
     # Check if FACTOR is part of the activity Info
     # this can be extended to various scenarios and use cases
-    if "FACTOR" in auth_provider_detail:
-        auth_protocol = "Other / MFA"
+    if 'FACTOR' in auth_provider_detail:
+        auth_protocol = 'Other / MFA'
         auth_protocol_id = 1
     return auth_protocol, auth_protocol_id
 
@@ -109,9 +108,9 @@ def get_audit_category(event_type):
     category_uid: Category unique identifier for the activity
     """
     # The event category name, for Successful Authentication , category name and category_uid are selected based on the OCSF schema
-    category_name = "Unknown"
+    category_name = 'Unknown'
     category_uid = 0
-    if "user.authentication" in event_type:
+    if 'user.authentication' in event_type:
         category_name = 'Audit Activity events'
         category_uid = 3
     return category_name, category_uid
@@ -126,7 +125,7 @@ def get_event_class():
     class_name: Name of the event class
     class_uid: Class unique identifier for the activity
     """
-    class_name = "Authentication Audit"
+    class_name = 'Authentication Audit'
     class_uid = 3002
     return class_name, class_uid
 
@@ -157,11 +156,11 @@ def get_destination_endpoint(destination_endpoint):
     detination_details: Returns the destination endpoint as a dictionary
     """
     # Create a JSON object in OCSF format
-    detination_details = {"hostname": destination_endpoint['requestUri'],
-                          "ip": "",
-                          "instance_uid": "",
-                          "interface_id": "",
-                          "svc_name": destination_endpoint['url']}
+    detination_details = {'hostname': destination_endpoint['requestUri'],
+                          'ip': '',
+                          'instance_uid': '',
+                          'interface_id': '',
+                          'svc_name': destination_endpoint['url']}
     return detination_details
 
 
@@ -180,7 +179,7 @@ def get_logon_type(login_transaction):
     # Capture the login transaction
     logon_type = login_transaction['type']
     # If WEB is not in logon_type return a normalized value
-    logon_type_id = - 1 if "WEB" in logon_type else 0
+    logon_type_id = - 1 if 'WEB' in logon_type else 0
 
     return logon_type, logon_type_id
 
@@ -198,7 +197,7 @@ def get_severity(severity):
     severity_id: Returns event severity  id
     """
     # If the event severity is INFO assign value as 1
-    severity_id = 1 if "INFO" in severity else 0
+    severity_id = 1 if 'INFO' in severity else 0
 
     return severity, severity_id
 
@@ -216,9 +215,9 @@ def get_src_endpoint(data):
     """
     # Create JSON formatted string compatible with OCSF schema
     return {
-        "hostname": data['debugContext']['debugData']['requestUri'],
-        "ip ": data['client']['ipAddress'],
-        "interface_id": data['client']['device']
+        'hostname': data['debugContext']['debugData']['requestUri'],
+        'ip ': data['client']['ipAddress'],
+        'interface_id': data['client']['device']
     }
 
 
@@ -259,13 +258,31 @@ def get_status_details(data):
     status_code = 'N/A'
     status_detail = ''
     status_id = -1
-    if "SUCCESS" in status_result:
-        status_detail = "LOGON_USER_INITIATED"
+    if 'SUCCESS' in status_result:
+        status_detail = 'LOGON_USER_INITIATED'
         status_id = 1
     return status_result, status_code, status_detail, status_id
 
 
-def get_type_category(eventType):
+def get_enrichment_data(client_data):
+    """
+    Function captures the Enrichment data for an event logged by Okta
+    get_enrichment_data function is dedicated for all the enrichment of data
+    This function can be enhanced based on data user wants to enrich. In this we will only return
+    Client, Devices and Geographical context
+    Returns
+    ------
+    enrichment: Array of the enriched data
+    """
+    # Data that that will be enriched is location of a user
+    # the OCSF schema
+    enrichment = {'name': 'geographicalContext', 'data': client_data['geographicalContext'],
+                  'value': client_data['ipAddress'], 'type': 'location'}
+
+    return [enrichment]
+
+
+def get_type_category(event_type):
     """
     Function captures the event type for an event logged by Okta
     get_audit_category function is dedicated for all the Audit Activity Types
@@ -278,13 +295,14 @@ def get_type_category(eventType):
     # The event category name, for Successful Authentication , category name and category_uid are selected based on
     # the OCSF schema
     type_uid = 0
-    type_name = "Unknown"
-    if "user.authentication" in eventType:
+    type_name = 'Unknown'
+    if 'user.authentication' in event_type:
         type_name = 'Authentication Audit: Logon'
         type_uid = 300201
     return type_uid, type_name
 
-def get_metadata(original_time,version):
+
+def get_metadata(original_time, version):
     """
     Function captures the metadata about the event type for an event logged by Okta
     get_metadata function is dedicated for capturing the Metadata Object Type
@@ -297,9 +315,9 @@ def get_metadata(original_time,version):
     return {
         'original_time': original_time,
         'product': {
-                    'vendor_name':'Okta',
-                    'name': 'Okta System Log'
-                    },
+            'vendor_name': 'Okta',
+            'name': 'Okta System Log'
+        },
         'version': version
     }
 
@@ -321,9 +339,10 @@ def tranform_data(data):
     # get user details and account type used for authentication
     dst_user = data['detail']['actor']['alternateId']
     # get additional additional information which is critical for the event but doesn't fall under OCSF schema
-    enrichments = data['detail']['target']
+    enrichments = get_enrichment_data(data['detail']['client'])
     # get time of the event
-    _time = data['time']
+    date_time = datetime.strptime(data['time'], '%Y-%m-%dT%H:%M:%SZ')
+    _time = int(date_time.timestamp())
     # get type of the logon
     logon_type, logon_type_id = get_logon_type(data['detail']['transaction'])
     # get the description of the message
@@ -345,7 +364,7 @@ def tranform_data(data):
     # get event type details in OCSF format
     type_uid, type_name = get_type_category(data['detail']['eventType'])
     # get metadata about the event type in OCSF format
-    metadata= get_metadata(data['time'],data['version'])
+    metadata = get_metadata(data['time'], data['version'])
     # Assemeble the JSON string in OCSF format
     json_data = {
         'activity_name': activity,
