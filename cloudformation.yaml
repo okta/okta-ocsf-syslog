@@ -267,7 +267,7 @@ Resources:
               # Capture the login transaction
               logon_type = login_transaction['type']
               # If WEB is not in logon_type return a normalized value
-              logon_type_id = - 1 if "WEB" in logon_type else 0
+              logon_type_id = 99 if "WEB" in logon_type else 0
 
               return logon_type, logon_type_id
 
@@ -390,6 +390,26 @@ Resources:
                   'version': version
               }
 
+
+          def get_enrichment_data(client_data):
+              """
+              Function captures the Enrichment data for an event logged by Okta
+              get_enrichment_data function is dedicated for all the enrichment of data
+              This function can be enhanced based on data user wants to enrich. In this we will only return
+              Client, Devices and Geographical context
+
+              Returns
+              ------
+              enrichment: Array of the enriched data
+              """
+              # Data that that will be enriched is location of a user
+              # the OCSF schema
+              enrichment = {'name': 'geographicalContext', 'data': client_data['geographicalContext'],
+                                                   'value': client_data['ipAddress'], 'type': 'location'}
+
+              return [enrichment]
+
+
           def tranform_data(data):
               # get activity details based on the eventType that is published
               activity, activity_id = get_activity_details(data['detail']['eventType'])
@@ -407,9 +427,10 @@ Resources:
               # get user details and account type used for authentication
               dst_user = data['detail']['actor']['alternateId']
               # get additional additional information which is critical for the event but doesn't fall under OCSF schema
-              enrichments = data['detail']['target']
+              enrichments = get_enrichment_data(data['detail']['client'])
               # get time of the event
-              _time = data['time']
+              date_time = datetime.strptime(data['time'],'%Y-%m-%dT%H:%M:%SZ')
+              _time = int(date_time.timestamp())
               # get type of the logon
               logon_type, logon_type_id = get_logon_type(data['detail']['transaction'])
               # get the description of the message
@@ -537,7 +558,7 @@ Resources:
               Name: dst_user
             - Type: struct<original_time:string,version:string,product:struct<vendor_name:string,name:string>>
               Name: metadata
-            - Type: array<struct<id:string,type:string,alternateId:string,displayName:string,detailEntry:struct<methodTypeUsed:string,methodUsedVerifiedProperties:string>>>
+            - Type: array<struct<name:string,type:string,value:string,data:struct<city:string,state:string,country:string,postalCode:string,type:string,value:string,geolocation:struct<lat:string,lon:string>>>>
               Name: enrichments
             - Type: string
               Name: time
@@ -603,7 +624,7 @@ Resources:
             - '/region=!{partitionKeyFromLambda:region}/accountId=!{partitionKeyFromLambda:AWS_account}/eventHour=!{partitionKeyFromLambda:eventhour}/'
         ErrorOutputPrefix: okta-ocsf-error
         BufferingHints:
-          IntervalInSeconds: 300
+          IntervalInSeconds: 60
           SizeInMBs: 66
         RoleARN: !GetAtt DeliveryRole.Arn
         DynamicPartitioningConfiguration:
