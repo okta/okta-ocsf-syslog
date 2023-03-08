@@ -179,7 +179,7 @@ def get_logon_type(login_transaction):
     # Capture the login transaction
     logon_type = login_transaction['type']
     # If WEB is not in logon_type return a normalized value
-    logon_type_id = - 1 if 'WEB' in logon_type else 0
+    logon_type_id = 99 if 'WEB' in logon_type else 0
 
     return logon_type, logon_type_id
 
