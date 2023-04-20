@@ -13,10 +13,10 @@ Parameters:
     Default: "okta_ocsf_tb"
     Description: "Name of the AWS Glue database for OCSF database"
   PartnerEventBus:
-    Description: Name of Okta's PArtner Event bus
+    Description: Name of Okta's Partner Event bus
     Type: String
   SecurityLakeS3:
-    Description: Name of the Security Lake S3 Bucket
+    Description: Name of the Security Lake S3 Location from AWS Security Lake Custom Source location
     Type: String
 
 Resources:
@@ -123,7 +123,7 @@ Resources:
                   partitionKeys["source"] = 'OktaEventSource'
                   partitionKeys["region"] = context.invoked_function_arn.split(":")[3]
                   partitionKeys["AWS_account"] = context.invoked_function_arn.split(":")[4]
-                  partitionKeys["eventhour"] = datetime1.strftime("%Y%m%d%H")
+                  partitionKeys["eventDay"] = datetime1.strftime("%Y%m%d")
 
                   # Reformats the output in a base64 encoded format.OCSF JSON Output will be used by Firehose datastream and AWS Glue Schema
                   output_record = {
@@ -504,12 +504,6 @@ Resources:
         Name: !Ref GlueDatabaseName
       CatalogId: !Ref AWS::AccountId
 
-  # MyS3Bucket:
-  #   Type: AWS::S3::Bucket
-  #   Properties:
-  #     BucketName: !Sub 'access-logs-parquet-${AWS::Region}-${AWS::AccountId}'
-  #     AccessControl: Private
-
   OCSFSchemaTable:
     Type: "AWS::Glue::Table"
     DependsOn: OCSFOktaDatabase
@@ -560,7 +554,7 @@ Resources:
               Name: metadata
             - Type: array<struct<name:string,type:string,value:string,data:struct<city:string,state:string,country:string,postalCode:string,type:string,value:string,geolocation:struct<lat:string,lon:string>>>>
               Name: enrichments
-            - Type: string
+            - Type: bigint
               Name: time
             - Type: string
               Name: logon_type
@@ -602,13 +596,14 @@ Resources:
               "paths": "time,activity,activity_id,auth_protocol,auth_protocol_id,category_name,category_uid,class_name,class_uid,displayMessage,dst_endpoint,dst_user,enrichments,is_cleartext,logon_type,logon_type_id,profile,ref_time,session_uid,severity,severity_id,src_endpoint,user,status,status_code,status_detail,status_id,type_name,type_uid,metadata"
             }
             SerializationLibrary: "org.openx.data.jsonserde.JsonSerDe"
-          Location: !Sub "s3://${SecurityLakeS3}"
+          Location: !Ref SecurityLakeS3
 
         Name: !Ref GlueTableName
       DatabaseName: !Ref GlueDatabaseName
       CatalogId: !Ref AWS::AccountId
 
-  #Create AWS Firehose Artifact
+  #Create AWS Firehose Delivery Stream
+
   DeliveryStream:
     Type: AWS::KinesisFirehose::DeliveryStream
     DependsOn: DateLakePermission
@@ -616,12 +611,15 @@ Resources:
       DeliveryStreamName: !Ref StreamName
       DeliveryStreamType: DirectPut
       ExtendedS3DestinationConfiguration:
-        BucketARN: !Sub 'arn:aws:s3:::${SecurityLakeS3}'
-        #Prefix: "!{partitionKeyFromLambda:source}/region=!{partitionKeyFromLambda:region}/AWS_account=!{partitionKeyFromLambda:AWS_account}/eventhour=!{partitionKeyFromLambda:eventhour}/"
+        BucketARN: !Join
+          - ''
+          - - 'arn:aws:s3:::'
+            - !Select [2, !Split ["/", !Ref SecurityLakeS3]]
         Prefix: !Join
           - ''
-          - - !Select [3, !Split ["/", !Ref PartnerEventBus]]
-            - '/region=!{partitionKeyFromLambda:region}/accountId=!{partitionKeyFromLambda:AWS_account}/eventHour=!{partitionKeyFromLambda:eventhour}/'
+          - - 'ext/'
+            - !Select [4, !Split ["/", !Ref SecurityLakeS3]]
+            - '/region=!{partitionKeyFromLambda:region}/accountId=!{partitionKeyFromLambda:AWS_account}/eventDay=!{partitionKeyFromLambda:eventDay}/'
         ErrorOutputPrefix: okta-ocsf-error
         BufferingHints:
           IntervalInSeconds: 60
@@ -684,11 +682,15 @@ Resources:
                   - !Join
                     - ''
                     - - 'arn:aws:s3:::'
-                      - !Ref SecurityLakeS3
+                      - !Select [2, !Split ["/", !Ref SecurityLakeS3]]
                   - !Join
                     - ''
                     - - 'arn:aws:s3:::'
-                      - !Ref SecurityLakeS3
+                      - !Select [2, !Split ["/", !Ref SecurityLakeS3]]
+                      - '/'
+                      - !Select [3, !Split ["/", !Ref SecurityLakeS3]]
+                      - '/'
+                      - !Select [4, !Split ["/", !Ref SecurityLakeS3]]
                       - '/*'
               - Effect: Allow
                 Action:
