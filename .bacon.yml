@@ -1,0 +1,17 @@
+test_suites:
+  - name: sast_scan
+    script_name: sast_scan
+    script_path: /root/okta/okta-ocsf-syslog/.bacon
+    sort_order: 1
+    queue_name: small
+    criteria: MERGE
+    timeout: 200
+    trigger: AUTO
+  - name: sca_scan
+    script_path: /root/okta/okta-ocsf-syslog/.bacon
+    script_name: dependency_scan
+    sort_order: '1'
+    timeout: '200'
+    criteria: MAINLINE
+    queue_name: small
+    trigger: AUTO
